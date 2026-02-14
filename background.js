@@ -10,7 +10,6 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 function checkAndPost() {
   chrome.storage.local.get({ posts: [] }, (result) => {
     const now = Date.now();
-    // Ищем посты, время которых наступило (или прошло) и статус 'pending'
     const pendingPost = result.posts.find(p => p.time <= now && p.status === 'pending');
 
     if (pendingPost) {
@@ -21,11 +20,9 @@ function checkAndPost() {
 }
 
 function performPost(post) {
-  // 1. Открываем профиль пользователя
   const targetUrl = 'https://coinmarketcap.com/community/profile/cointhinker/';
 
   chrome.tabs.create({ url: targetUrl, active: true }, (tab) => {
-    // Ждем 15 секунд полной загрузки React и прогрузки элементов
     setTimeout(() => {
       chrome.scripting.executeScript({
         target: { tabId: tab.id },
@@ -35,7 +32,6 @@ function performPost(post) {
         if (chrome.runtime.lastError) {
           console.error("Ошибка скрипта:", chrome.runtime.lastError);
         } else {
-          // Если все ок, удаляем пост из очереди
           removePost(post.id);
         }
       });
@@ -53,127 +49,147 @@ function removePost(id) {
 // === ЭТОТ КОД ВЫПОЛНЯЕТСЯ НА СТРАНИЦЕ CMC ===
 async function injectedPoster(postData) {
   console.log("🚀 Авто-постер CMC запущен", postData);
-  
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-  // --- ЭТАП 1: СКРОЛЛ И ПОИСК СИНЕЙ КНОПКИ ---
+  // --- ЭТАП 1: ПОИСК И ОТКРЫТИЕ МОДАЛКИ (как раньше) ---
   console.log("🔍 Ищем кнопку поста...");
-  
   let postButton = null;
-  
-  // Пытаемся найти кнопку в течение 30 секунд
   for (let i = 0; i < 15; i++) {
-    // Скроллим вниз, чтобы подгрузить элементы (иногда кнопка появляется при скролле)
     window.scrollBy(0, 500); 
     await sleep(1500);
 
-    // 1. Приоритетный поиск: по классу, который дал пользователь
-    // Ищем точное совпадение классов или частичное
     const specificButton = document.querySelector('.iSUEMj.post.button');
-    
-    // 2. Поиск по иконке #new-feed (очень надежный признак)
     const iconButton = document.querySelector('use[href="#new-feed"]');
     
-    // 3. Поиск по тексту "Post" (резервный вариант)
-    const textButtons = Array.from(document.querySelectorAll('button, div[role="button"]'));
-    const textButton = textButtons.find(b => b.innerText.trim() === 'Post' || b.innerText.trim() === '+');
-
     if (specificButton) {
         postButton = specificButton;
-        console.log("✅ Кнопка найдена по классу!");
     } else if (iconButton) {
-        // Если нашли иконку, нужно кликнуть по её родителю (кнопке)
-        postButton = iconButton.closest('div[role="button"]') || iconButton.closest('button') || iconButton.closest('div.post.button') || iconButton.closest('div');
-        console.log("✅ Кнопка найдена по иконке #new-feed!");
-    } else if (textButton) {
-        postButton = textButton;
-        console.log("⚠️ Кнопка найдена по тексту (менее надежно).");
+        postButton = iconButton.closest('div[role="button"]') || iconButton.closest('button') || iconButton.closest('div.post.button');
     }
 
     if (postButton) {
-      // Скроллим к кнопке, чтобы она была видна и кликабельна
       postButton.scrollIntoView({ behavior: 'smooth', block: 'center' });
       await sleep(1000); 
       break;
     }
   }
 
-  if (!postButton) {
-    console.error("❌ Не удалось найти кнопку поста. Проверьте верстку.");
-    return;
-  }
-
-  // Кликаем по кнопке
+  if (!postButton) return console.error("❌ Не найдена кнопка открытия поста");
   postButton.click();
-  console.log("🖱 Клик по кнопке поста...");
-  await sleep(3000); // Ждем открытия модального окна
+  await sleep(3000);
 
-  // --- ЭТАП 2: РАБОТА В МОДАЛЬНОМ ОКНЕ ---
-  console.log("📝 Ищем поле ввода в модальном окне...");
-
-  // В модальном окне поле ввода - это обычно div[contenteditable="true"]
-  // Ищем редактор внутри модального окна (dialog или div с высоким z-index)
-  // Но проще найти все редакторы и взять последний (так как модалка в конце DOM)
-  const editors = Array.from(document.querySelectorAll('div[contenteditable="true"], textarea'));
+  // --- ЭТАП 2: ВВОД ТЕКСТА (ИСПРАВЛЕНО) ---
+  console.log("📝 Ищем редактор...");
+  // На скриншоте видно placeholder "How do you feel...". Ищем по нему.
+  // Обычно это div с contenteditable="true"
+  const editors = Array.from(document.querySelectorAll('div[contenteditable="true"]'));
+  // Берем последний видимый
   let editor = editors[editors.length - 1];
 
   if (!editor) {
-    console.error("❌ Поле ввода не найдено.");
-    return;
+      // Запасной вариант: ищем по тексту placeholder'а (он часто лежит в соседнем div)
+      const placeholders = Array.from(document.querySelectorAll('div'));
+      const placeholder = placeholders.find(el => el.innerText.includes("How do you feel about the markets"));
+      if (placeholder) {
+          // Редактор обычно рядом с placeholder или это родительский элемент
+          // Кликаем по placeholder, чтобы активировать фокус
+          placeholder.click();
+          await sleep(500);
+          // После клика фокус должен быть в редакторе
+          editor = document.activeElement; 
+      }
   }
 
-  console.log("✍️ Пишем текст...");
-  editor.focus();
-  
-  // Эмуляция ввода
-  document.execCommand('insertText', false, postData.text);
-  await sleep(2000);
+  if (editor) {
+      console.log("✍️ Активируем редактор и пишем...");
+      // 1. Сначала кликаем, чтобы убрать "серый" текст placeholder'а
+      editor.click();
+      editor.focus();
+      await sleep(1000); // Важно подождать, пока React отработает фокус
 
-  // --- ЭТАП 3: ЗАГРУЗКА ФОТО ---
+      // 2. Вводим текст через execCommand (самый надежный способ для rich text редакторов)
+      document.execCommand('insertText', false, postData.text);
+      
+      // 3. Если текст не вставился, пробуем запасной метод (прямая вставка + событие input)
+      if (!editor.innerText || editor.innerText.trim() === "") {
+           editor.innerText = postData.text;
+           editor.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      await sleep(1500);
+  } else {
+      console.error("❌ Редактор не найден");
+  }
+
+  // --- ЭТАП 3: ВЫБОР BULLISH/BEARISH (ОПЦИОНАЛЬНО, КАК НА СКРИНЕ) ---
+  // На скриншоте видно кнопки Bullish / Bearish. Можно кликнуть Bullish для красоты.
+  const bullishBtn = Array.from(document.querySelectorAll('div, button, span')).find(el => el.innerText.trim() === 'Bullish');
+  if (bullishBtn) {
+      bullishBtn.click();
+      await sleep(500);
+  }
+
+  // --- ЭТАП 4: ЗАГРУЗКА ФОТО (ИСПРАВЛЕНО) ---
   if (postData.image) {
     console.log("🖼 Загружаем фото...");
-    // Ищем input file. Обычно он один или последний в списке
-    const fileInputs = document.querySelectorAll('input[type="file"]');
-    const fileInput = fileInputs[fileInputs.length - 1]; 
+    
+    // 1. Сначала ищем кнопку-иконку картинки, чтобы "активировать" зону загрузки (иногда input создается только после клика)
+    // Ищем иконку, которая похожа на "image" или "picture". Обычно это svg.
+    // На скрине это первая иконка слева в ряду иконок.
+    
+    // Попробуем найти input[type=file] сразу. Если он есть в DOM, используем его.
+    let fileInput = document.querySelector('input[type="file"]');
+    
+    if (!fileInput) {
+        // Если инпута нет, кликаем по иконке картинки. 
+        // Это обычно кнопка с svg внутри, рядом с кнопкой GIF.
+        // Ищем элемент, который содержит svg и находится рядом с GIF
+        const gifIcon = Array.from(document.querySelectorAll('div, span, button')).find(el => el.innerText === 'GIF');
+        if (gifIcon) {
+            // Иконка картинки обычно СЛЕВА от GIF. Берем предыдущего соседа.
+            const imageIconBtn = gifIcon.previousElementSibling || gifIcon.parentElement.previousElementSibling;
+            if (imageIconBtn) {
+                imageIconBtn.click();
+                await sleep(1000); // Ждем появления инпута
+                fileInput = document.querySelector('input[type="file"]');
+            }
+        }
+    }
+
+    // Если все еще нет input, ищем просто последний file input на странице
+    if (!fileInput) {
+        const inputs = document.querySelectorAll('input[type="file"]');
+        fileInput = inputs[inputs.length - 1];
+    }
 
     if (fileInput) {
       try {
         const res = await fetch(postData.image);
         const blob = await res.blob();
-        
-        // Создаем файл с уникальным именем
-        const fileName = `image_${Date.now()}.png`;
-        const file = new File([blob], fileName, { type: "image/png" });
+        const file = new File([blob], "image.png", { type: "image/png" });
 
         const dataTransfer = new DataTransfer();
         dataTransfer.items.add(file);
         fileInput.files = dataTransfer.files;
         
-        // Важно: событие change должно всплывать
         fileInput.dispatchEvent(new Event('change', { bubbles: true }));
         await sleep(5000); // Ждем превью
       } catch (e) {
-        console.error("Ошибка загрузки фото:", e);
+        console.error("Ошибка обработки файла:", e);
       }
     } else {
-        console.warn("Input для файла не найден");
+        console.error("❌ Input для загрузки файла так и не появился.");
     }
   }
 
-  // --- ЭТАП 4: ПУБЛИКАЦИЯ ---
-  console.log("🚀 Нажимаем финальную кнопку Post...");
-  
-  // Ищем кнопку Post внутри модалки
-  const allButtons = Array.from(document.querySelectorAll('button'));
-  const finalPostBtn = allButtons.find(b => {
-    const text = b.innerText.trim();
-    return (text === 'Post' || text === 'Reply') && !b.disabled;
-  });
+  // --- ЭТАП 5: ПУБЛИКАЦИЯ ---
+  console.log("🚀 Нажимаем Post...");
+  const postBtns = Array.from(document.querySelectorAll('button'));
+  const finalPostBtn = postBtns.find(b => b.innerText.trim() === 'Post' && !b.disabled);
 
   if (finalPostBtn) {
     finalPostBtn.click();
-    console.log("✅ Успешно опубликовано!");
+    console.log("✅ Готово!");
   } else {
-    console.error("❌ Финальная кнопка Post не найдена или неактивна.");
+    console.error("❌ Кнопка Post не найдена/неактивна");
   }
 }
