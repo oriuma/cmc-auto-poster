@@ -49,7 +49,7 @@ function removePost(id) {
 
 // === ЭТОТ КОД ВЫПОЛНЯЕТСЯ НА СТРАНИЦЕ CMC ===
 async function injectedPoster(postData) {
-  console.log("🚀 Авто-постер CMC запущен v4 (Human Typing)", postData);
+  console.log("🚀 Авто-постер CMC запущен v5 (Paste Strategy)", postData);
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
   // --- ЭТАП 1: ПОИСК КНОПКИ ---
@@ -79,85 +79,75 @@ async function injectedPoster(postData) {
   postButton.click();
   await sleep(4000); 
 
-  // --- ЭТАП 2: ВВОД ТЕКСТА (ЭМУЛЯЦИЯ ПЕЧАТИ) ---
+  // --- ЭТАП 2: ВВОД ТЕКСТА (СТРАТЕГИЯ PASTE) ---
   console.log("📝 Ищем редактор...");
   
-  // Ищем все contenteditable
   const editors = Array.from(document.querySelectorAll('div[contenteditable="true"]'));
   const editor = editors[editors.length - 1];
 
   if (editor) {
-      console.log("✍️ Редактор найден. Кликаем...");
+      console.log("✍️ Редактор найден. Активируем фокус...");
       
-      // 1. КЛИК И ФОКУС (ОБЯЗАТЕЛЬНО)
-      editor.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      await sleep(500);
+      // 1. ФОКУС И УСТАНОВКА КУРСОРА
       editor.focus();
       editor.click();
-      
-      // Кликаем по центру элемента (на всякий случай, если клик попал в край)
-      const rect = editor.getBoundingClientRect();
-      const clickEvent = new MouseEvent('click', {
-          view: window,
-          bubbles: true,
-          cancelable: true,
-          clientX: rect.left + rect.width / 2,
-          clientY: rect.top + rect.height / 2
-      });
-      editor.dispatchEvent(clickEvent);
-      
-      await sleep(1000); // Ждем реакции интерфейса
-
-      // 2. ОЧИСТКА (на всякий случай)
-      document.execCommand('selectAll', false, null);
-      document.execCommand('delete', false, null);
       await sleep(500);
 
-      // 3. ЭМУЛЯЦИЯ ПОБУКВЕННОГО ВВОДА (Самый надежный способ для React)
-      console.log("⌨️ Печатаем текст...");
+      // Устанавливаем курсор (Caret) внутрь редактора, даже если он "пустой"
+      const range = document.createRange();
+      range.selectNodeContents(editor);
+      range.collapse(false); // В конец
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
       
-      // Сначала вводим первый символ "силой", чтобы сбить placeholder
-      const firstChar = postData.text.charAt(0);
-      const remainingText = postData.text.slice(1);
-      
-      // Эмулируем нажатие клавиши
-      editor.dispatchEvent(new KeyboardEvent('keydown', { key: firstChar, bubbles: true }));
-      editor.dispatchEvent(new KeyboardEvent('keypress', { key: firstChar, bubbles: true }));
-      document.execCommand('insertText', false, firstChar);
-      editor.dispatchEvent(new KeyboardEvent('keyup', { key: firstChar, bubbles: true }));
-      editor.dispatchEvent(new Event('input', { bubbles: true }));
-      
-      await sleep(100);
+      await sleep(500);
 
-      // Остальной текст вставляем блоком (чтобы быстрее)
-      if (remainingText) {
-          document.execCommand('insertText', false, remainingText);
-          editor.dispatchEvent(new Event('input', { bubbles: true }));
-      }
+      // 2. ЭМУЛЯЦИЯ ВСТАВКИ (PASTE) - ЭТО ГЛАВНЫЙ ФИКС
+      // React редакторы (DraftJS, Slate) отлично обрабатывают событие Paste, 
+      // обновляя свой внутренний state.
+      console.log("📋 Эмулируем вставку текста...");
+
+      const dataTransfer = new DataTransfer();
+      dataTransfer.setData('text/plain', postData.text);
       
-      await sleep(1500);
+      const pasteEvent = new ClipboardEvent('paste', {
+          bubbles: true,
+          cancelable: true,
+          clipboardData: dataTransfer
+      });
       
-      // Проверка: если текст не появился, используем запасной Paste
-      if (editor.innerText.trim().length === 0) {
-          console.warn("⚠️ insertText не сработал, пробуем Paste...");
-          const dataTransfer = new DataTransfer();
-          dataTransfer.setData('text/plain', postData.text);
-          const pasteEvent = new ClipboardEvent('paste', {
-              clipboardData: dataTransfer,
+      editor.dispatchEvent(pasteEvent);
+      
+      await sleep(1000);
+
+      // 3. ПРОВЕРКА И ЗАПАСНОЙ ВАРИАНТ (textInput)
+      // Если текст все еще не появился или placeholder на месте
+      if (editor.innerText.trim().length === 0 || document.querySelector('.public-DraftEditorPlaceholder-root')) {
+          console.warn("⚠️ Paste не сработал, пробуем textInput event...");
+          
+          const textInputEvent = new InputEvent('textInput', {
+              data: postData.text,
               bubbles: true,
-              cancelable: true
+              cancelable: true,
+              view: window
           });
-          editor.dispatchEvent(pasteEvent);
-          // Если paste не перехвачен, вставляем вручную
-          if (!pasteEvent.defaultPrevented) {
-             editor.innerText = postData.text;
-             editor.dispatchEvent(new Event('input', { bubbles: true }));
-          }
+          editor.dispatchEvent(textInputEvent);
+          
+          // И еще один вариант - просто input
+          const inputEvent = new InputEvent('input', {
+              data: postData.text,
+              inputType: 'insertText',
+              bubbles: true
+          });
+          editor.dispatchEvent(inputEvent);
       }
 
   } else {
       console.error("❌ Редактор текста не найден!");
   }
+
+  await sleep(1000);
 
   // --- ЭТАП 3: ОПЦИИ (Bullish) ---
   const bullishBtn = Array.from(document.querySelectorAll('div, button, span')).find(el => el.innerText.trim() === 'Bullish');
@@ -212,6 +202,6 @@ async function injectedPoster(postData) {
     finalPostBtn.click();
     console.log("✅ УСПЕХ!");
   } else {
-    console.error("❌ Кнопка Post неактивна.");
+    console.error("❌ Кнопка Post неактивна. Попробуйте кликнуть вручную.");
   }
 }
