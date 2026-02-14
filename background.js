@@ -10,6 +10,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 function checkAndPost() {
   chrome.storage.local.get({ posts: [] }, (result) => {
     const now = Date.now();
+    // Ищем посты, время которых наступило (или прошло) и статус 'pending'
     const pendingPost = result.posts.find(p => p.time <= now && p.status === 'pending');
 
     if (pendingPost) {
@@ -20,11 +21,11 @@ function checkAndPost() {
 }
 
 function performPost(post) {
-  // 1. Открываем вкладку Community
-  const targetUrl = 'https://coinmarketcap.com/community/';
+  // 1. Открываем профиль пользователя (как ты просил)
+  const targetUrl = 'https://coinmarketcap.com/community/profile/cointhinker/';
 
   chrome.tabs.create({ url: targetUrl, active: true }, (tab) => {
-    // Ждем загрузки страницы (10 сек)
+    // Ждем 15 секунд полной загрузки React и прогрузки элементов
     setTimeout(() => {
       chrome.scripting.executeScript({
         target: { tabId: tab.id },
@@ -34,12 +35,12 @@ function performPost(post) {
         if (chrome.runtime.lastError) {
           console.error("Ошибка скрипта:", chrome.runtime.lastError);
         } else {
+          // Если все ок, удаляем пост из очереди
+          // (В реальной версии можно добавить проверку return value из injectedPoster)
           removePost(post.id);
-          // Можно закрыть вкладку через некоторое время
-          // setTimeout(() => chrome.tabs.remove(tab.id), 10000); 
         }
       });
-    }, 10000); 
+    }, 15000); 
   });
 }
 
@@ -52,89 +53,116 @@ function removePost(id) {
 
 // === ЭТОТ КОД ВЫПОЛНЯЕТСЯ НА СТРАНИЦЕ CMC ===
 async function injectedPoster(postData) {
-  console.log("Авто-постер запущен...", postData);
-
-  const waitFor = (selector, timeout = 10000) => {
-    return new Promise((resolve) => {
-      if (document.querySelector(selector)) return resolve(document.querySelector(selector));
-      const observer = new MutationObserver(() => {
-        if (document.querySelector(selector)) {
-          observer.disconnect();
-          resolve(document.querySelector(selector));
-        }
-      });
-      observer.observe(document.body, { childList: true, subtree: true });
-      setTimeout(() => { observer.disconnect(); resolve(null); }, timeout);
-    });
-  };
-
+  console.log("🚀 Авто-постер CMC запущен", postData);
+  
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-  // 1. Ищем поле ввода
-  // Пытаемся найти по aria-label, placeholder или contenteditable
-  let editor = document.querySelector('div[contenteditable="true"]');
-  if (!editor) {
-      // Запасной вариант: клик по кнопке "Start a discussion" или похожее, если редактор скрыт
-      // Но обычно на странице /community/ редактор сразу виден сверху
-      const possibleInputs = Array.from(document.querySelectorAll('div, textarea'));
-      editor = possibleInputs.find(el => el.getAttribute('placeholder')?.includes("mind") || el.innerText.includes("mind"));
-  }
+  // --- ЭТАП 1: СКРОЛЛ И ПОИСК СИНЕЙ КНОПКИ ---
+  console.log("🔍 Ищем синюю кнопку...");
+  
+  let postButton = null;
+  
+  // Пытаемся найти кнопку в течение 30 секунд, периодически подскролливая
+  for (let i = 0; i < 15; i++) {
+    window.scrollBy(0, 300); // Скроллим вниз
+    await sleep(1500);
 
-  if (!editor) {
-    console.error("Не найдено поле ввода! Проверьте селекторы.");
-    return;
-  }
-
-  editor.focus();
-  editor.click();
-  await sleep(1000);
-
-  // 2. Вставка текста
-  document.execCommand('insertText', false, postData.text);
-  await sleep(1000);
-
-  // 3. Загрузка изображения
-  if (postData.image) {
-    // Ищем input[type=file]
-    // На CMC кнопка картинки обычно создает input, но он может быть скрыт
-    // Попробуем найти любой file input в области редактора
-    const fileInputs = document.querySelectorAll('input[type="file"]');
-    // Берем последний, так как он часто добавляется динамически при открытии редактора
-    const fileInput = fileInputs[fileInputs.length - 1]; 
+    // Ищем кнопку по визуальным признакам:
+    // 1. Тег button или div
+    // 2. Синий фон (rgb(56, 97, 251))
+    // 3. Обычно это плавающая кнопка (position: fixed) или кнопка с иконкой карандаша/плюса
     
-    if (fileInput) {
-      try {
-          // Конвертируем Base64 обратно в File
-          const res = await fetch(postData.image);
-          const blob = await res.blob();
-          const file = new File([blob], "image.png", { type: "image/png" });
+    const buttons = Array.from(document.querySelectorAll('button, div[role="button"]'));
+    postButton = buttons.find(b => {
+      const style = window.getComputedStyle(b);
+      const isBlue = style.backgroundColor === 'rgb(56, 97, 251)' || style.backgroundColor === '#3861fb';
+      // Проверяем, что это не кнопка "Follow" (она тоже синяя)
+      const isNotFollow = !b.innerText.includes("Follow"); 
+      // Часто внутри есть SVG (карандаш или плюс)
+      const hasSvg = b.querySelector('svg');
+      
+      return isBlue && isNotFollow && (hasSvg || b.innerText.includes("Post") || b.innerText === "+");
+    });
 
-          const dataTransfer = new DataTransfer();
-          dataTransfer.items.add(file);
-          fileInput.files = dataTransfer.files;
-
-          const event = new Event('change', { bubbles: true });
-          fileInput.dispatchEvent(event);
-          
-          await sleep(5000); // Ждем загрузки превью
-      } catch (e) {
-          console.error("Ошибка при загрузке картинки", e);
-      }
-    } else {
-      console.warn("Input для файла не найден");
+    if (postButton) {
+      console.log("✅ Кнопка найдена!", postButton);
+      break;
     }
   }
 
-  // 4. Нажатие кнопки Post
-  // Ищем кнопку Post, которая активна (не disabled)
-  const buttons = Array.from(document.querySelectorAll('button'));
-  // Фильтруем по тексту и доступности
-  const postBtn = buttons.find(b => (b.innerText.trim() === 'Post' || b.innerText.trim() === 'Reply') && !b.disabled);
+  if (!postButton) {
+    console.error("❌ Не удалось найти синюю кнопку для поста. Проверьте верстку.");
+    return;
+  }
 
-  if (postBtn) {
-      postBtn.click();
-      console.log("Кнопка Post нажата!");
+  // Кликаем по кнопке открытия модалки
+  postButton.click();
+  await sleep(3000); // Ждем открытия модального окна
+
+  // --- ЭТАП 2: РАБОТА В МОДАЛЬНОМ ОКНЕ ---
+  console.log("📝 Ищем поле ввода в модальном окне...");
+
+  // В модальном окне поле ввода - это обычно div[contenteditable="true"]
+  // Ищем активный или видимый редактор
+  const editors = Array.from(document.querySelectorAll('div[contenteditable="true"], textarea'));
+  // Берем последний найденный, так как модалка обычно в конце DOM
+  let editor = editors[editors.length - 1];
+
+  if (!editor) {
+    console.error("❌ Поле ввода не найдено в модальном окне.");
+    return;
+  }
+
+  console.log("✍️ Пишем текст...");
+  editor.focus();
+  editor.click();
+  await sleep(500);
+  
+  // Эмуляция ввода текста
+  document.execCommand('insertText', false, postData.text);
+  await sleep(2000);
+
+  // --- ЭТАП 3: ЗАГРУЗКА ФОТО ---
+  if (postData.image) {
+    console.log("🖼 Загружаем фото...");
+    // Ищем input file внутри модального окна (или рядом с редактором)
+    // Обычно он скрыт (display: none), но он есть в DOM
+    const fileInputs = document.querySelectorAll('input[type="file"]');
+    // Берем последний, он скорее всего относится к открытой модалке
+    const fileInput = fileInputs[fileInputs.length - 1]; 
+
+    if (fileInput) {
+      try {
+        const res = await fetch(postData.image);
+        const blob = await res.blob();
+        const file = new File([blob], "image.png", { type: "image/png" });
+
+        const dataTransfer = new DataTransfer();
+        dataTransfer.items.add(file);
+        fileInput.files = dataTransfer.files;
+        
+        fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+        await sleep(5000); // Ждем превью
+      } catch (e) {
+        console.error("Ошибка загрузки фото:", e);
+      }
+    }
+  }
+
+  // --- ЭТАП 4: ПУБЛИКАЦИЯ ---
+  console.log("🚀 Нажимаем Post...");
+  
+  // Ищем кнопку Post внутри модалки
+  // Она должна быть синей и содержать текст "Post"
+  const allButtons = Array.from(document.querySelectorAll('button'));
+  const finalPostBtn = allButtons.find(b => {
+    return b.innerText.trim() === 'Post' && !b.disabled && b !== postButton; // Исключаем кнопку открытия
+  });
+
+  if (finalPostBtn) {
+    finalPostBtn.click();
+    console.log("✅ Успешно нажата кнопка публикации!");
   } else {
-      console.error("Кнопка Post не найдена или неактивна");
+    console.error("❌ Финальная кнопка Post не найдена или неактивна.");
   }
 }
