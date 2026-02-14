@@ -23,6 +23,7 @@ function performPost(post) {
   const targetUrl = 'https://coinmarketcap.com/community/profile/cointhinker/';
 
   chrome.tabs.create({ url: targetUrl, active: true }, (tab) => {
+    // Ждем достаточно времени для полной загрузки
     setTimeout(() => {
       chrome.scripting.executeScript({
         target: { tabId: tab.id },
@@ -48,10 +49,10 @@ function removePost(id) {
 
 // === ЭТОТ КОД ВЫПОЛНЯЕТСЯ НА СТРАНИЦЕ CMC ===
 async function injectedPoster(postData) {
-  console.log("🚀 Авто-постер CMC запущен", postData);
+  console.log("🚀 Авто-постер CMC запущен v3", postData);
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-  // --- ЭТАП 1: ПОИСК И ОТКРЫТИЕ МОДАЛКИ (как раньше) ---
+  // --- ЭТАП 1: ПОИСК КНОПКИ (Уже работает) ---
   console.log("🔍 Ищем кнопку поста...");
   let postButton = null;
   for (let i = 0; i < 15; i++) {
@@ -76,89 +77,81 @@ async function injectedPoster(postData) {
 
   if (!postButton) return console.error("❌ Не найдена кнопка открытия поста");
   postButton.click();
-  await sleep(3000);
+  await sleep(4000); // Даем модалке время открыться
 
-  // --- ЭТАП 2: ВВОД ТЕКСТА (ИСПРАВЛЕНО) ---
-  console.log("📝 Ищем редактор...");
-  // На скриншоте видно placeholder "How do you feel...". Ищем по нему.
-  // Обычно это div с contenteditable="true"
+  // --- ЭТАП 2: ВВОД ТЕКСТА (ИСПРАВЛЕННАЯ ЛОГИКА) ---
+  console.log("📝 Работа с редактором...");
+  
+  // Ищем все contenteditable. В модальном окне он обычно последний.
   const editors = Array.from(document.querySelectorAll('div[contenteditable="true"]'));
-  // Берем последний видимый
-  let editor = editors[editors.length - 1];
-
-  if (!editor) {
-      // Запасной вариант: ищем по тексту placeholder'а (он часто лежит в соседнем div)
-      const placeholders = Array.from(document.querySelectorAll('div'));
-      const placeholder = placeholders.find(el => el.innerText.includes("How do you feel about the markets"));
-      if (placeholder) {
-          // Редактор обычно рядом с placeholder или это родительский элемент
-          // Кликаем по placeholder, чтобы активировать фокус
-          placeholder.click();
-          await sleep(500);
-          // После клика фокус должен быть в редакторе
-          editor = document.activeElement; 
-      }
-  }
+  const editor = editors[editors.length - 1];
 
   if (editor) {
-      console.log("✍️ Активируем редактор и пишем...");
-      // 1. Сначала кликаем, чтобы убрать "серый" текст placeholder'а
-      editor.click();
-      editor.focus();
-      await sleep(1000); // Важно подождать, пока React отработает фокус
-
-      // 2. Вводим текст через execCommand (самый надежный способ для rich text редакторов)
-      document.execCommand('insertText', false, postData.text);
+      console.log("✍️ Редактор найден. Активируем...");
       
-      // 3. Если текст не вставился, пробуем запасной метод (прямая вставка + событие input)
-      if (!editor.innerText || editor.innerText.trim() === "") {
-           editor.innerText = postData.text;
-           editor.dispatchEvent(new Event('input', { bubbles: true }));
+      // 1. ЖЕСТКИЙ ФОКУС
+      // Эмулируем клик пользователя, чтобы React "проснулся" и убрал placeholder
+      editor.focus();
+      editor.click();
+      // Дополнительно кликаем по родительскому элементу, если placeholder перехватывает клики
+      if (editor.parentElement) editor.parentElement.click();
+      
+      await sleep(1000);
+
+      // 2. ЭМУЛЯЦИЯ НАЖАТИЯ КЛАВИШИ (Очистка)
+      // Иногда нужно "нажать" клавишу, чтобы React понял, что ввод начался
+      editor.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'a', char: 'a', keyCode: 65 }));
+      await sleep(100);
+
+      // 3. ВВОД ТЕКСТА ЧЕРЕЗ EXECCOMMAND (Это имитирует настоящий ввод)
+      // Это самый надежный способ для contenteditable
+      document.execCommand('selectAll', false, null); // Выделить все (на всякий случай)
+      document.execCommand('insertText', false, postData.text); 
+      
+      // 4. ПРОВЕРКА И ДОБИВАНИЕ
+      // Если текст не вставился или placeholder остался
+      await sleep(500);
+      if (editor.innerText.trim() === "" || editor.innerText.length < 2) {
+          console.warn("⚠️ execCommand не сработал, пробуем запасной вариант...");
+          editor.innerText = postData.text;
+          // Очень важно: событие input дает понять React'у, что данные изменились
+          const inputEvent = new Event('input', { bubbles: true, cancelable: true });
+          editor.dispatchEvent(inputEvent);
       }
-      await sleep(1500);
+      
+      await sleep(1000);
   } else {
-      console.error("❌ Редактор не найден");
+      console.error("❌ Редактор текста не найден!");
   }
 
-  // --- ЭТАП 3: ВЫБОР BULLISH/BEARISH (ОПЦИОНАЛЬНО, КАК НА СКРИНЕ) ---
-  // На скриншоте видно кнопки Bullish / Bearish. Можно кликнуть Bullish для красоты.
+  // --- ЭТАП 3: ОПЦИИ (Bullish) ---
   const bullishBtn = Array.from(document.querySelectorAll('div, button, span')).find(el => el.innerText.trim() === 'Bullish');
   if (bullishBtn) {
       bullishBtn.click();
       await sleep(500);
   }
 
-  // --- ЭТАП 4: ЗАГРУЗКА ФОТО (ИСПРАВЛЕНО) ---
+  // --- ЭТАП 4: ФОТО (Уже работает) ---
   if (postData.image) {
     console.log("🖼 Загружаем фото...");
     
-    // 1. Сначала ищем кнопку-иконку картинки, чтобы "активировать" зону загрузки (иногда input создается только после клика)
-    // Ищем иконку, которая похожа на "image" или "picture". Обычно это svg.
-    // На скрине это первая иконка слева в ряду иконок.
-    
-    // Попробуем найти input[type=file] сразу. Если он есть в DOM, используем его.
+    // Ищем кнопку галереи (рядом с GIF)
+    const gifIcon = Array.from(document.querySelectorAll('div, span, button')).find(el => el.innerText === 'GIF');
     let fileInput = document.querySelector('input[type="file"]');
     
-    if (!fileInput) {
-        // Если инпута нет, кликаем по иконке картинки. 
-        // Это обычно кнопка с svg внутри, рядом с кнопкой GIF.
-        // Ищем элемент, который содержит svg и находится рядом с GIF
-        const gifIcon = Array.from(document.querySelectorAll('div, span, button')).find(el => el.innerText === 'GIF');
-        if (gifIcon) {
-            // Иконка картинки обычно СЛЕВА от GIF. Берем предыдущего соседа.
-            const imageIconBtn = gifIcon.previousElementSibling || gifIcon.parentElement.previousElementSibling;
-            if (imageIconBtn) {
-                imageIconBtn.click();
-                await sleep(1000); // Ждем появления инпута
-                fileInput = document.querySelector('input[type="file"]');
-            }
+    // Если input'а нет, кликаем иконку галереи
+    if (!fileInput && gifIcon) {
+        const imageIconBtn = gifIcon.previousElementSibling || gifIcon.parentElement.previousElementSibling;
+        if (imageIconBtn) {
+            imageIconBtn.click();
+            await sleep(1000);
+            fileInput = document.querySelector('input[type="file"]');
         }
     }
-
-    // Если все еще нет input, ищем просто последний file input на странице
-    if (!fileInput) {
-        const inputs = document.querySelectorAll('input[type="file"]');
-        fileInput = inputs[inputs.length - 1];
+    
+    if (!fileInput) { // Fallback
+         const inputs = document.querySelectorAll('input[type="file"]');
+         fileInput = inputs[inputs.length - 1];
     }
 
     if (fileInput) {
@@ -172,24 +165,20 @@ async function injectedPoster(postData) {
         fileInput.files = dataTransfer.files;
         
         fileInput.dispatchEvent(new Event('change', { bubbles: true }));
-        await sleep(5000); // Ждем превью
-      } catch (e) {
-        console.error("Ошибка обработки файла:", e);
-      }
-    } else {
-        console.error("❌ Input для загрузки файла так и не появился.");
+        await sleep(5000); 
+      } catch (e) { console.error(e); }
     }
   }
 
   // --- ЭТАП 5: ПУБЛИКАЦИЯ ---
-  console.log("🚀 Нажимаем Post...");
+  console.log("🚀 Публикуем...");
   const postBtns = Array.from(document.querySelectorAll('button'));
   const finalPostBtn = postBtns.find(b => b.innerText.trim() === 'Post' && !b.disabled);
 
   if (finalPostBtn) {
     finalPostBtn.click();
-    console.log("✅ Готово!");
+    console.log("✅ УСПЕХ!");
   } else {
-    console.error("❌ Кнопка Post не найдена/неактивна");
+    console.error("❌ Кнопка Post неактивна. Возможно, текст не распознан.");
   }
 }
