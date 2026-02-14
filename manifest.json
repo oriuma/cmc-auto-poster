@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "CMC Auto Poster",
+  "version": "1.0",
+  "permissions": [
+    "storage",
+    "alarms",
+    "scripting",
+    "tabs",
+    "unlimitedStorage"
+  ],
+  "host_permissions": [
+    "https://coinmarketcap.com/*"
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  }
+}
