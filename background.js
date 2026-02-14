@@ -21,7 +21,7 @@ function checkAndPost() {
 }
 
 function performPost(post) {
-  // 1. Открываем профиль пользователя (как ты просил)
+  // 1. Открываем профиль пользователя
   const targetUrl = 'https://coinmarketcap.com/community/profile/cointhinker/';
 
   chrome.tabs.create({ url: targetUrl, active: true }, (tab) => {
@@ -36,7 +36,6 @@ function performPost(post) {
           console.error("Ошибка скрипта:", chrome.runtime.lastError);
         } else {
           // Если все ок, удаляем пост из очереди
-          // (В реальной версии можно добавить проверку return value из injectedPoster)
           removePost(post.id);
         }
       });
@@ -58,110 +57,122 @@ async function injectedPoster(postData) {
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
   // --- ЭТАП 1: СКРОЛЛ И ПОИСК СИНЕЙ КНОПКИ ---
-  console.log("🔍 Ищем синюю кнопку...");
+  console.log("🔍 Ищем кнопку поста...");
   
   let postButton = null;
   
-  // Пытаемся найти кнопку в течение 30 секунд, периодически подскролливая
+  // Пытаемся найти кнопку в течение 30 секунд
   for (let i = 0; i < 15; i++) {
-    window.scrollBy(0, 300); // Скроллим вниз
+    // Скроллим вниз, чтобы подгрузить элементы (иногда кнопка появляется при скролле)
+    window.scrollBy(0, 500); 
     await sleep(1500);
 
-    // Ищем кнопку по визуальным признакам:
-    // 1. Тег button или div
-    // 2. Синий фон (rgb(56, 97, 251))
-    // 3. Обычно это плавающая кнопка (position: fixed) или кнопка с иконкой карандаша/плюса
+    // 1. Приоритетный поиск: по классу, который дал пользователь
+    // Ищем точное совпадение классов или частичное
+    const specificButton = document.querySelector('.iSUEMj.post.button');
     
-    const buttons = Array.from(document.querySelectorAll('button, div[role="button"]'));
-    postButton = buttons.find(b => {
-      const style = window.getComputedStyle(b);
-      const isBlue = style.backgroundColor === 'rgb(56, 97, 251)' || style.backgroundColor === '#3861fb';
-      // Проверяем, что это не кнопка "Follow" (она тоже синяя)
-      const isNotFollow = !b.innerText.includes("Follow"); 
-      // Часто внутри есть SVG (карандаш или плюс)
-      const hasSvg = b.querySelector('svg');
-      
-      return isBlue && isNotFollow && (hasSvg || b.innerText.includes("Post") || b.innerText === "+");
-    });
+    // 2. Поиск по иконке #new-feed (очень надежный признак)
+    const iconButton = document.querySelector('use[href="#new-feed"]');
+    
+    // 3. Поиск по тексту "Post" (резервный вариант)
+    const textButtons = Array.from(document.querySelectorAll('button, div[role="button"]'));
+    const textButton = textButtons.find(b => b.innerText.trim() === 'Post' || b.innerText.trim() === '+');
+
+    if (specificButton) {
+        postButton = specificButton;
+        console.log("✅ Кнопка найдена по классу!");
+    } else if (iconButton) {
+        // Если нашли иконку, нужно кликнуть по её родителю (кнопке)
+        postButton = iconButton.closest('div[role="button"]') || iconButton.closest('button') || iconButton.closest('div.post.button') || iconButton.closest('div');
+        console.log("✅ Кнопка найдена по иконке #new-feed!");
+    } else if (textButton) {
+        postButton = textButton;
+        console.log("⚠️ Кнопка найдена по тексту (менее надежно).");
+    }
 
     if (postButton) {
-      console.log("✅ Кнопка найдена!", postButton);
+      // Скроллим к кнопке, чтобы она была видна и кликабельна
+      postButton.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      await sleep(1000); 
       break;
     }
   }
 
   if (!postButton) {
-    console.error("❌ Не удалось найти синюю кнопку для поста. Проверьте верстку.");
+    console.error("❌ Не удалось найти кнопку поста. Проверьте верстку.");
     return;
   }
 
-  // Кликаем по кнопке открытия модалки
+  // Кликаем по кнопке
   postButton.click();
+  console.log("🖱 Клик по кнопке поста...");
   await sleep(3000); // Ждем открытия модального окна
 
   // --- ЭТАП 2: РАБОТА В МОДАЛЬНОМ ОКНЕ ---
   console.log("📝 Ищем поле ввода в модальном окне...");
 
   // В модальном окне поле ввода - это обычно div[contenteditable="true"]
-  // Ищем активный или видимый редактор
+  // Ищем редактор внутри модального окна (dialog или div с высоким z-index)
+  // Но проще найти все редакторы и взять последний (так как модалка в конце DOM)
   const editors = Array.from(document.querySelectorAll('div[contenteditable="true"], textarea'));
-  // Берем последний найденный, так как модалка обычно в конце DOM
   let editor = editors[editors.length - 1];
 
   if (!editor) {
-    console.error("❌ Поле ввода не найдено в модальном окне.");
+    console.error("❌ Поле ввода не найдено.");
     return;
   }
 
   console.log("✍️ Пишем текст...");
   editor.focus();
-  editor.click();
-  await sleep(500);
   
-  // Эмуляция ввода текста
+  // Эмуляция ввода
   document.execCommand('insertText', false, postData.text);
   await sleep(2000);
 
   // --- ЭТАП 3: ЗАГРУЗКА ФОТО ---
   if (postData.image) {
     console.log("🖼 Загружаем фото...");
-    // Ищем input file внутри модального окна (или рядом с редактором)
-    // Обычно он скрыт (display: none), но он есть в DOM
+    // Ищем input file. Обычно он один или последний в списке
     const fileInputs = document.querySelectorAll('input[type="file"]');
-    // Берем последний, он скорее всего относится к открытой модалке
     const fileInput = fileInputs[fileInputs.length - 1]; 
 
     if (fileInput) {
       try {
         const res = await fetch(postData.image);
         const blob = await res.blob();
-        const file = new File([blob], "image.png", { type: "image/png" });
+        
+        // Создаем файл с уникальным именем
+        const fileName = `image_${Date.now()}.png`;
+        const file = new File([blob], fileName, { type: "image/png" });
 
         const dataTransfer = new DataTransfer();
         dataTransfer.items.add(file);
         fileInput.files = dataTransfer.files;
         
+        // Важно: событие change должно всплывать
         fileInput.dispatchEvent(new Event('change', { bubbles: true }));
         await sleep(5000); // Ждем превью
       } catch (e) {
         console.error("Ошибка загрузки фото:", e);
       }
+    } else {
+        console.warn("Input для файла не найден");
     }
   }
 
   // --- ЭТАП 4: ПУБЛИКАЦИЯ ---
-  console.log("🚀 Нажимаем Post...");
+  console.log("🚀 Нажимаем финальную кнопку Post...");
   
   // Ищем кнопку Post внутри модалки
-  // Она должна быть синей и содержать текст "Post"
   const allButtons = Array.from(document.querySelectorAll('button'));
   const finalPostBtn = allButtons.find(b => {
-    return b.innerText.trim() === 'Post' && !b.disabled && b !== postButton; // Исключаем кнопку открытия
+    const text = b.innerText.trim();
+    return (text === 'Post' || text === 'Reply') && !b.disabled;
   });
 
   if (finalPostBtn) {
     finalPostBtn.click();
-    console.log("✅ Успешно нажата кнопка публикации!");
+    console.log("✅ Успешно опубликовано!");
   } else {
     console.error("❌ Финальная кнопка Post не найдена или неактивна.");
   }
