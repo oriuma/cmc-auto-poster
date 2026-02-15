@@ -306,40 +306,111 @@ function postToBinance(post) {
 }
 
 async function binancePoster(postData) {
-  console.log("🟫 Binance Square Auto-Poster v6", postData);
+  console.log("🟫 Binance Square Auto-Poster v7 (Fixed)", postData);
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-  // Поиск поля ввода (увеличено время)
+  // ШАГ 1: Поиск и активация поля ввода
+  console.log("🔍 Binance: Searching for input field...");
   let editor = null;
-  for (let i = 0; i < 15; i++) { // Было 10, стало 15
-    const allEditables = Array.from(document.querySelectorAll('div[contenteditable="true"], textarea, input[type="text"]'));
+  
+  for (let attempt = 0; attempt < 20; attempt++) {
+    // Прокручиваем наверх, чтобы видеть поле ввода
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    await sleep(1000);
+    
+    // Ищем все возможные поля ввода
+    const allEditables = [
+      ...Array.from(document.querySelectorAll('div[contenteditable="true"]')),
+      ...Array.from(document.querySelectorAll('textarea')),
+      ...Array.from(document.querySelectorAll('input[type="text"]')),
+      ...Array.from(document.querySelectorAll('[role="textbox"]'))
+    ];
+    
+    console.log(`📝 Попытка ${attempt + 1}: найдено ${allEditables.length} редактируемых элементов`);
+    
+    // Ищем поле по placeholder или позиции
     editor = allEditables.find(el => {
-      const placeholder = el.getAttribute('placeholder') || el.getAttribute('data-placeholder') || '';
-      return placeholder.toLowerCase().includes('share your thoughts');
+      const placeholder = el.getAttribute('placeholder') || 
+                         el.getAttribute('data-placeholder') || 
+                         el.getAttribute('aria-label') || '';
+      const text = el.innerText || el.value || '';
+      
+      return placeholder.toLowerCase().includes('share') ||
+             placeholder.toLowerCase().includes('thought') ||
+             placeholder.toLowerCase().includes('write') ||
+             text.toLowerCase().includes('share your');
     });
-
-    if (editor) break;
-    await sleep(2500); // Было 2000, стало 2500
+    
+    // Если не нашли по placeholder, берем первый видимый contenteditable
+    if (!editor && allEditables.length > 0) {
+      editor = allEditables.find(el => {
+        const rect = el.getBoundingClientRect();
+        return rect.height > 30 && rect.width > 200;
+      });
+    }
+    
+    if (editor) {
+      console.log("✅ Найдено поле ввода!", editor);
+      break;
+    }
+    
+    await sleep(2000);
   }
 
-  if (!editor) return console.error("❌ Binance: Editor not found");
+  if (!editor) {
+    console.error("❌ Binance: Editor not found after 20 attempts");
+    return;
+  }
 
-  console.log("✍️ Binance: Found editor");
+  // ШАГ 2: Активация поля (несколько способов)
+  console.log("🖱️ Binance: Activating input field...");
   editor.scrollIntoView({ behavior: 'smooth', block: 'center' });
   await sleep(1500);
+  
+  // Мультиплексированная активация
   editor.focus();
+  await sleep(300);
   editor.click();
-  await sleep(1500);
+  await sleep(300);
+  
+  // Dispatch события для React
+  editor.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+  editor.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+  editor.dispatchEvent(new FocusEvent('focus', { bubbles: true }));
+  await sleep(500);
 
-  // Ввод текста
+  // ШАГ 3: Ввод текста (улучшенный метод)
+  console.log("✍️ Binance: Inserting text...");
+  
+  // Метод 1: Через execCommand (работает в contenteditable)
+  if (editor.isContentEditable) {
+    editor.focus();
+    document.execCommand('selectAll', false, null);
+    document.execCommand('delete', false, null);
+    
+    // Вставляем текст по частям для надежности
+    const textParts = postData.text.split('\n');
+    for (let i = 0; i < textParts.length; i++) {
+      document.execCommand('insertText', false, textParts[i]);
+      if (i < textParts.length - 1) {
+        document.execCommand('insertLineBreak', false, null);
+      }
+    }
+  } else {
+    // Метод 2: Для textarea/input
+    editor.value = postData.text;
+    editor.dispatchEvent(new Event('input', { bubbles: true }));
+    editor.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  
+  // Дополнительно через paste event
   const range = document.createRange();
   range.selectNodeContents(editor);
   range.collapse(false);
   const selection = window.getSelection();
   selection.removeAllRanges();
   selection.addRange(range);
-  await sleep(500);
-
+  
   const dataTransfer = new DataTransfer();
   dataTransfer.setData('text/plain', postData.text);
   const pasteEvent = new ClipboardEvent('paste', {
@@ -348,23 +419,35 @@ async function binancePoster(postData) {
       clipboardData: dataTransfer
   });
   editor.dispatchEvent(pasteEvent);
-  await sleep(2000);
+  
+  await sleep(2500);
+  console.log("📝 Текст вставлен:", editor.innerText || editor.value);
 
-  // Загрузка картинки
+  // ШАГ 4: Загрузка картинки (если есть)
   if (postData.image) {
-    console.log("🖼 Binance: Uploading image...");
+    console.log("🖼️ Binance: Uploading image...");
     
-    const imageSvg = document.querySelector('svg path[fill-rule="evenodd"][clip-rule="evenodd"]');
-    let imageButton = imageSvg ? imageSvg.closest('button') || imageSvg.closest('div[role="button"]') : null;
+    // Ищем кнопку загрузки изображения (иконка с картинкой)
+    const imageButtons = [
+      ...Array.from(document.querySelectorAll('button')),
+      ...Array.from(document.querySelectorAll('[role="button"]')),
+      ...Array.from(document.querySelectorAll('div[class*="upload"]')),
+      ...Array.from(document.querySelectorAll('svg')).map(svg => svg.closest('button') || svg.closest('[role="button"]')).filter(Boolean)
+    ];
+    
+    // Ищем кнопку рядом с редактором
+    const editorContainer = editor.closest('div[class*="container"]') || editor.parentElement;
+    let imageButton = imageButtons.find(btn => editorContainer.contains(btn));
     
     if (imageButton) {
       imageButton.click();
-      await sleep(2000); // Было 1500
+      await sleep(2000);
     }
 
+    // Находим input[type="file"]
     let fileInput = document.querySelector('input[type="file"]');
     if (!fileInput) {
-      const inputs = document.querySelectorAll('input[type="file"]');
+      const inputs = Array.from(document.querySelectorAll('input[type="file"]'));
       fileInput = inputs[inputs.length - 1];
     }
 
@@ -377,24 +460,82 @@ async function binancePoster(postData) {
         dt.items.add(file);
         fileInput.files = dt.files;
         fileInput.dispatchEvent(new Event('change', { bubbles: true }));
-        await sleep(6000); // Было 5000
-      } catch (e) { console.error("❌ Binance image error:", e); }
+        console.log("✅ Image uploaded!");
+        await sleep(6000);
+      } catch (e) { 
+        console.error("❌ Binance image error:", e); 
+      }
+    } else {
+      console.warn("⚠️ File input not found");
     }
   }
 
-  // Поиск желтой кнопки Post
-  console.log("🚀 Binance: Looking for Post button...");
-  const allButtons = Array.from(document.querySelectorAll('button'));
-  const postBtn = allButtons.find(b => {
-    const text = b.innerText.trim().toLowerCase();
-    const style = window.getComputedStyle(b);
+  // ШАГ 5: Поиск и нажатие кнопки Post
+  console.log("🔍 Binance: Looking for Post button...");
+  
+  await sleep(1000);
+  
+  // Ищем кнопку Post несколькими способами
+  const allButtons = [
+    ...Array.from(document.querySelectorAll('button')),
+    ...Array.from(document.querySelectorAll('[role="button"]'))
+  ];
+  
+  console.log(`🔘 Найдено ${allButtons.length} кнопок на странице`);
+  
+  // Способ 1: По тексту и желтому цвету
+  let postBtn = allButtons.find(btn => {
+    const text = btn.innerText?.trim().toLowerCase() || '';
+    const style = window.getComputedStyle(btn);
     const bgColor = style.backgroundColor;
-    const isYellow = bgColor.includes('240, 185') || bgColor.includes('252, 213') || bgColor.includes('248, 194');
-    return (text === 'post' || text === 'publish' || text === 'submit') && isYellow;
+    
+    // Проверяем желтый цвет Binance
+    const isYellow = bgColor.includes('240, 185') || 
+                     bgColor.includes('252, 213') || 
+                     bgColor.includes('248, 194') ||
+                     bgColor.includes('rgb(240') ||
+                     bgColor.includes('#F0B90B') ||
+                     bgColor.includes('#FCD535');
+    
+    const isPostButton = text === 'post' || text === 'publish' || text === 'submit' || text === 'send';
+    
+    if (isPostButton) {
+      console.log(`🔍 Найдена кнопка "${text}", желтая: ${isYellow}, цвет: ${bgColor}`);
+    }
+    
+    return isPostButton && isYellow;
   });
+  
+  // Способ 2: Просто по тексту "Post" справа от редактора
+  if (!postBtn) {
+    const editorRect = editor.getBoundingClientRect();
+    postBtn = allButtons.find(btn => {
+      const text = btn.innerText?.trim().toLowerCase() || '';
+      const btnRect = btn.getBoundingClientRect();
+      const isRight = btnRect.left > editorRect.right - 100;
+      const isNearEditor = Math.abs(btnRect.top - editorRect.top) < 200;
+      
+      return (text === 'post' || text === 'publish') && isRight && isNearEditor;
+    });
+  }
+  
+  // Способ 3: Любая желтая кнопка с текстом
+  if (!postBtn) {
+    postBtn = allButtons.find(btn => {
+      const style = window.getComputedStyle(btn);
+      const bgColor = style.backgroundColor;
+      const isYellow = bgColor.includes('240') || bgColor.includes('252');
+      const hasText = btn.innerText?.trim().length > 0;
+      return isYellow && hasText && !btn.disabled;
+    });
+  }
 
   if (postBtn && !postBtn.disabled) {
+    console.log("✅ Нажимаю кнопку Post:", postBtn);
     postBtn.click();
+    await sleep(500);
+    postBtn.click(); // Двойной клик для надежности
+    
     console.log("✅ Binance: Success!");
     
     setTimeout(() => {
@@ -403,5 +544,12 @@ async function binancePoster(postData) {
     }, 2000);
   } else {
     console.error("❌ Binance: Post button not found or disabled");
+    console.log("🔍 Debug: Все кнопки с текстом:");
+    allButtons.forEach((btn, i) => {
+      if (btn.innerText?.trim()) {
+        const style = window.getComputedStyle(btn);
+        console.log(`  ${i}: "${btn.innerText.trim()}" | BG: ${style.backgroundColor} | Disabled: ${btn.disabled}`);
+      }
+    });
   }
 }
