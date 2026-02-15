@@ -3,32 +3,290 @@
 <head>
   <meta charset="UTF-8">
   <style>
-    body { width: 320px; font-family: sans-serif; padding: 10px; }
-    textarea { width: 100%; height: 80px; margin-bottom: 10px; }
-    input, button { width: 100%; margin-bottom: 10px; padding: 8px; }
-    button { background: #3861fb; color: white; border: none; cursor: pointer; font-weight: bold; }
-    button:hover { background: #2f54eb; }
-    .post-item { border-bottom: 1px solid #eee; padding: 5px 0; font-size: 12px; }
-    .delete-btn { color: red; cursor: pointer; float: right; }
-    img.preview { max-width: 50px; max-height: 50px; display: block; margin-top: 5px; }
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body { 
+      width: 380px; 
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      padding: 16px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: #333;
+    }
+    
+    .container {
+      background: white;
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+    }
+    
+    h3 {
+      font-size: 20px;
+      margin-bottom: 16px;
+      color: #667eea;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    
+    h3::before {
+      content: '📅';
+      font-size: 24px;
+    }
+    
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      color: #555;
+      margin-bottom: 6px;
+      margin-top: 12px;
+    }
+    
+    textarea { 
+      width: 100%; 
+      min-height: 80px;
+      padding: 10px;
+      border: 2px solid #e1e8ed;
+      border-radius: 8px;
+      font-size: 14px;
+      font-family: inherit;
+      resize: vertical;
+      transition: border-color 0.2s;
+    }
+    
+    textarea:focus {
+      outline: none;
+      border-color: #667eea;
+    }
+    
+    input[type="file"], input[type="datetime-local"] { 
+      width: 100%; 
+      padding: 10px;
+      border: 2px solid #e1e8ed;
+      border-radius: 8px;
+      font-size: 13px;
+      transition: border-color 0.2s;
+    }
+    
+    input:focus {
+      outline: none;
+      border-color: #667eea;
+    }
+    
+    .platforms {
+      margin: 16px 0;
+      padding: 12px;
+      background: #f7f9fc;
+      border-radius: 8px;
+      border: 2px solid #e1e8ed;
+    }
+    
+    .platforms label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 8px 0;
+      font-weight: 500;
+      cursor: pointer;
+      padding: 8px;
+      border-radius: 6px;
+      transition: background 0.2s;
+    }
+    
+    .platforms label:hover {
+      background: rgba(102, 126, 234, 0.1);
+    }
+    
+    .platforms input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      cursor: pointer;
+      accent-color: #667eea;
+    }
+    
+    .platform-icon {
+      font-size: 18px;
+    }
+    
+    button { 
+      width: 100%; 
+      padding: 12px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white; 
+      border: none; 
+      border-radius: 8px;
+      cursor: pointer; 
+      font-weight: 600;
+      font-size: 14px;
+      margin-top: 16px;
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+    
+    button:hover { 
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+    }
+    
+    button:active {
+      transform: translateY(0);
+    }
+    
+    #status {
+      margin-top: 12px;
+      padding: 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      text-align: center;
+      font-weight: 500;
+    }
+    
+    #status:not(:empty) {
+      background: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+    }
+    
+    h4 {
+      font-size: 16px;
+      margin: 20px 0 10px 0;
+      color: #667eea;
+      border-bottom: 2px solid #e1e8ed;
+      padding-bottom: 8px;
+    }
+    
+    #postsList {
+      max-height: 300px;
+      overflow-y: auto;
+    }
+    
+    .post-item { 
+      border-bottom: 1px solid #e1e8ed;
+      padding: 12px 0;
+      font-size: 13px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      transition: background 0.2s;
+    }
+    
+    .post-item:hover {
+      background: #f7f9fc;
+      padding-left: 8px;
+      margin-left: -8px;
+      padding-right: 8px;
+      margin-right: -8px;
+      border-radius: 6px;
+    }
+    
+    .post-content {
+      flex: 1;
+    }
+    
+    .post-time {
+      font-weight: 600;
+      color: #667eea;
+      margin-bottom: 4px;
+    }
+    
+    .post-text {
+      color: #666;
+      margin-bottom: 6px;
+    }
+    
+    .post-platforms {
+      display: flex;
+      gap: 4px;
+      flex-wrap: wrap;
+    }
+    
+    .platform-badge {
+      background: #667eea;
+      color: white;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    
+    .delete-btn { 
+      color: #e74c3c;
+      cursor: pointer;
+      font-weight: bold;
+      font-size: 18px;
+      padding: 0 8px;
+      transition: transform 0.2s;
+    }
+    
+    .delete-btn:hover {
+      transform: scale(1.2);
+    }
+    
+    img.preview { 
+      max-width: 50px;
+      max-height: 50px;
+      border-radius: 4px;
+      margin-top: 6px;
+      border: 2px solid #e1e8ed;
+    }
+    
+    ::-webkit-scrollbar {
+      width: 8px;
+    }
+    
+    ::-webkit-scrollbar-track {
+      background: #f1f1f1;
+      border-radius: 4px;
+    }
+    
+    ::-webkit-scrollbar-thumb {
+      background: #667eea;
+      border-radius: 4px;
+    }
+    
+    ::-webkit-scrollbar-thumb:hover {
+      background: #764ba2;
+    }
   </style>
 </head>
 <body>
-  <h3>CMC Scheduler</h3>
-  
-  <textarea id="postText" placeholder="Текст поста..."></textarea>
-  
-  <label>Изображение (опционально):</label>
-  <input type="file" id="postImage" accept="image/*">
-  
-  <label>Время публикации:</label>
-  <input type="datetime-local" id="postTime">
-  
-  <button id="scheduleBtn">Запланировать</button>
-  
-  <div id="status"></div>
-  <h4>Очередь постов:</h4>
-  <div id="postsList"></div>
+  <div class="container">
+    <h3>Social Scheduler</h3>
+    
+    <label>Post Content:</label>
+    <textarea id="postText" placeholder="Write your post here..."></textarea>
+    
+    <label>Image (optional):</label>
+    <input type="file" id="postImage" accept="image/*">
+    
+    <label>Publish Time:</label>
+    <input type="datetime-local" id="postTime">
+    
+    <label>Platforms:</label>
+    <div class="platforms">
+      <label>
+        <input type="checkbox" id="platformCMC" value="cmc" checked>
+        <span class="platform-icon">📊</span>
+        <span>CoinMarketCap</span>
+      </label>
+      <label>
+        <input type="checkbox" id="platformBinance" value="binance">
+        <span class="platform-icon">🟫</span>
+        <span>Binance Square</span>
+      </label>
+    </div>
+    
+    <button id="scheduleBtn">🚀 Schedule Post</button>
+    
+    <div id="status"></div>
+    
+    <h4>📋 Scheduled Posts</h4>
+    <div id="postsList"></div>
+  </div>
 
   <script src="popup.js"></script>
 </body>
